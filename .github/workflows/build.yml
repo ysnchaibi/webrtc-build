@@ -50,18 +50,43 @@ jobs:
               run: |
                   git clone --depth 1 https://github.com/webrtc-sdk/webrtc-build.git
 
-            - name: Build & package
+            - name: Fetch, patch & configure
               run: |
                   python3 run.py build macos_arm64 \
                     --commit "${{ inputs.commit }}" \
-                    --webrtc-fetch
-                  python3 run.py package macos_arm64
+                    --webrtc-fetch \
+                    --webrtc-nobuild
+
+            - name: Build WebRTC
+              run: |
+                  export PATH="$PWD/_source/macos_arm64/depot_tools:$PATH"
+                  BUILD_DIR="$PWD/_build/macos_arm64/release/webrtc"
+
+                  # Build specific targets only — skip ':default' which pulls
+                  # in libc++ C++ module compilation (DarwinBasic.pcm etc.)
+                  # that depends on SDK modulemaps absent from all current SDKs.
+                  autoninja -C "$BUILD_DIR" \
+                    api/audio_codecs:builtin_audio_decoder_factory \
+                    api/task_queue:default_task_queue_factory \
+                    sdk:native_api \
+                    sdk:default_codec_factory_objc \
+                    pc:peer_connection \
+                    sdk:videocapture_objc \
+                    sdk:mac_framework_objc
+
+            - name: Create libwebrtc.a
+              run: |
+                  BUILD_DIR="$PWD/_build/macos_arm64/release/webrtc"
+                  cd "$BUILD_DIR/obj"
+                  OBJECTS=$(find . -name '*.o' -not -path './third_party/nasm/*')
+                  echo "Found $(echo "$OBJECTS" | wc -l) object files"
+                  /usr/bin/ar -rc "$BUILD_DIR/libwebrtc.a" $OBJECTS
+                  echo "libwebrtc.a size: $(du -h "$BUILD_DIR/libwebrtc.a" | cut -f1)"
 
             - name: Verify ABI compatibility
-              working-directory: .
               run: |
+                  LIB="$PWD/_build/macos_arm64/release/webrtc/libwebrtc.a"
                   echo "=== Checking for Chromium libc++ symbols ==="
-                  LIB="webrtc-build/build/_package/macos_arm64/webrtc/lib/libwebrtc.a"
                   CR_COUNT=$(nm "$LIB" 2>/dev/null | grep -c '__Cr' || true)
                   STD1_COUNT=$(nm "$LIB" 2>/dev/null | grep -c '__1' || true)
                   echo "__Cr symbols (Chromium libc++): $CR_COUNT"
@@ -73,21 +98,30 @@ jobs:
                     echo "Clean build — no Chromium libc++ symbols!"
                   fi
 
-            - name: Repackage for vcpkg
-              working-directory: .
+            - name: Package for vcpkg
               run: |
-                  SRC="webrtc-build/build/_package/macos_arm64/webrtc"
-                  mkdir -p package/{include,lib}
-                  cp "$SRC/lib/libwebrtc.a" package/lib/
-                  cp -R "$SRC/include/." package/include/
-                  cp "$SRC/VERSIONS" package/ 2>/dev/null || true
-                  cp "$SRC/NOTICE" package/ 2>/dev/null || true
-                  echo "${{ inputs.release_tag }}" > package/VERSION
+                  BUILD_DIR="$PWD/_build/macos_arm64/release/webrtc"
+                  SRC_DIR="$PWD/_source/macos_arm64/webrtc/src"
 
-                  cd package
-                  tar -Jcf ../libwebrtc-macos-arm64.tar.xz include lib VERSION NOTICE
+                  mkdir -p /tmp/package/{include,lib}
+                  cp "$BUILD_DIR/libwebrtc.a" /tmp/package/lib/
+
+                  # Copy headers
+                  rsync -amv \
+                    --include='*/' --include='*.h' --include='*.hpp' --exclude='*' \
+                    "$SRC_DIR/." /tmp/package/include/.
+
+                  echo "${{ inputs.release_tag }}" > /tmp/package/VERSION
+
+                  cd /tmp/package
+                  tar -Jcf /tmp/libwebrtc-macos-arm64.tar.xz include lib VERSION
                   echo "=== Package size ==="
-                  ls -lh ../libwebrtc-macos-arm64.tar.xz
+                  ls -lh /tmp/libwebrtc-macos-arm64.tar.xz
+
+              # Move artifact to workspace root for upload
+            - name: Copy artifact
+              working-directory: .
+              run: cp /tmp/libwebrtc-macos-arm64.tar.xz .
 
             - name: Upload artifact
               uses: actions/upload-artifact@v4
