@@ -59,22 +59,23 @@ jobs:
 
             - name: Create missing SDK modulemaps
               run: |
-                  BUILD_DIR="$PWD/_build/macos_arm64/release/webrtc"
+                  SDK_PATH=$(xcrun --show-sdk-path)
+                  echo "SDK: $SDK_PATH"
 
-                  # The libc++ C++ module compilation references SDK modulemaps
-                  # (DarwinBasic, DarwinFoundation1, etc.) that don't exist in
-                  # public macOS SDKs — Google's hermetic SDK includes them.
+                  # WebRTC m144 libc++ module compilation references modulemaps
+                  # from Google's hermetic SDK that don't exist in public macOS SDKs.
                   # Create empty stubs so the .pcm compilation succeeds.
-                  grep -rohE '/[^ "]+\.modulemap' "$BUILD_DIR" --include='*.ninja' \
-                    | sort -u \
-                    | while read -r mapfile; do
-                        if [ ! -f "$mapfile" ]; then
-                          modname=$(basename "$mapfile" .modulemap)
-                          echo "Creating stub: $mapfile (module $modname)"
-                          sudo mkdir -p "$(dirname "$mapfile")"
-                          printf 'module %s [system] {\n}\n' "$modname" | sudo tee "$mapfile" > /dev/null
-                        fi
-                      done
+                  # (use_custom_libcxx=false means the actual libc++ comes from
+                  # the system — these stubs don't affect the final binary.)
+                  for mod in DarwinBasic DarwinFoundation1 DarwinFoundation2 DarwinFoundation3; do
+                    mapfile="$SDK_PATH/usr/include/$mod.modulemap"
+                    if [ ! -f "$mapfile" ]; then
+                      echo "Creating stub: $mapfile"
+                      printf 'module %s [system] {\n}\n' "$mod" | sudo tee "$mapfile" > /dev/null
+                    else
+                      echo "Already exists: $mapfile"
+                    fi
+                  done
 
             - name: Build WebRTC
               run: |
