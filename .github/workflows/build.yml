@@ -1,0 +1,102 @@
+name: Build WebRTC
+
+on:
+    workflow_dispatch:
+        inputs:
+            commit:
+                description: "webrtc-sdk/webrtc commit hash (from VERSION or custom)"
+                required: true
+                default: "770e5461892d7d1aaff7ff886ab1fc7c5cd77bd1"
+            release_tag:
+                description: "Release tag (e.g., m144.7559.03)"
+                required: true
+                default: "m144.7559.03"
+
+permissions:
+    contents: write
+
+jobs:
+    build-macos-arm64:
+        runs-on: macos-15
+        timeout-minutes: 120
+        defaults:
+            run:
+                working-directory: ./webrtc-build/build
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Free disk space
+              working-directory: .
+              run: |
+                  echo "=== Disk space before cleanup ==="
+                  df -h /
+                  sudo rm -rf /Users/runner/Library/Android
+                  sudo rm -rf /Users/runner/.dotnet
+                  sudo rm -rf /Users/runner/hostedtoolcache
+                  echo "=== Disk space after cleanup ==="
+                  df -h /
+
+            - name: Clone webrtc-sdk/webrtc-build
+              working-directory: .
+              run: |
+                  git clone --depth 1 https://github.com/webrtc-sdk/webrtc-build.git
+
+            - name: Build & package
+              run: |
+                  python3 run.py build macos_arm64 \
+                    --commit "${{ inputs.commit }}" \
+                    --webrtc-fetch
+                  python3 run.py package macos_arm64
+
+            - name: Verify ABI compatibility
+              working-directory: .
+              run: |
+                  echo "=== Checking for Chromium libc++ symbols ==="
+                  LIB="webrtc-build/build/_package/macos_arm64/webrtc/lib/libwebrtc.a"
+                  CR_COUNT=$(nm "$LIB" 2>/dev/null | grep -c '__Cr' || true)
+                  STD1_COUNT=$(nm "$LIB" 2>/dev/null | grep -c '__1' || true)
+                  echo "__Cr symbols (Chromium libc++): $CR_COUNT"
+                  echo "__1 symbols (system libc++):    $STD1_COUNT"
+
+                  if [ "$CR_COUNT" -gt 0 ]; then
+                    echo "::warning::Found $CR_COUNT Chromium libc++ (__Cr) symbols — may cause ABI issues"
+                  else
+                    echo "Clean build — no Chromium libc++ symbols!"
+                  fi
+
+            - name: Repackage for vcpkg
+              working-directory: .
+              run: |
+                  SRC="webrtc-build/build/_package/macos_arm64/webrtc"
+                  mkdir -p package/{include,lib}
+                  cp "$SRC/lib/libwebrtc.a" package/lib/
+                  cp -R "$SRC/include/." package/include/
+                  cp "$SRC/VERSIONS" package/ 2>/dev/null || true
+                  cp "$SRC/NOTICE" package/ 2>/dev/null || true
+                  echo "${{ inputs.release_tag }}" > package/VERSION
+
+                  cd package
+                  tar -Jcf ../libwebrtc-macos-arm64.tar.xz include lib VERSION NOTICE
+                  echo "=== Package size ==="
+                  ls -lh ../libwebrtc-macos-arm64.tar.xz
+
+            - name: Upload artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: libwebrtc-macos-arm64
+                  path: libwebrtc-macos-arm64.tar.xz
+
+            - name: Create release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ inputs.release_tag }}
+                  name: "WebRTC ${{ inputs.release_tag }}"
+                  body: |
+                      WebRTC `${{ inputs.release_tag }}` built from [webrtc-sdk/webrtc](https://github.com/webrtc-sdk/webrtc) with `use_custom_libcxx=false` (system libc++).
+
+                      - Source: `webrtc-sdk/webrtc`
+                      - Commit: `${{ inputs.commit }}`
+                      - Platform: macOS arm64
+                      - ABI: `std::__1::` (Apple system libc++)
+                  files: libwebrtc-macos-arm64.tar.xz
