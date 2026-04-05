@@ -17,7 +17,7 @@ permissions:
 
 jobs:
     build-macos-arm64:
-        runs-on: macos-15
+        runs-on: macos-26
         timeout-minutes: 120
         defaults:
             run:
@@ -26,14 +26,12 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
-            - name: Select latest Xcode
+            - name: Select Xcode 26.0
+              working-directory: .
               run: |
-                  # List available Xcode versions and pick the latest
-                  ls -d /Applications/Xcode*.app || true
-                  LATEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
-                  echo "Using $LATEST_XCODE"
-                  sudo xcode-select --switch "$LATEST_XCODE/Contents/Developer"
+                  sudo xcode-select --switch /Applications/Xcode_26.0.app/Contents/Developer
                   xcodebuild -version
+                  xcrun --show-sdk-path
 
             - name: Free disk space
               working-directory: .
