@@ -57,14 +57,30 @@ jobs:
                     --webrtc-fetch \
                     --webrtc-nobuild
 
+            - name: Create missing SDK modulemaps
+              run: |
+                  BUILD_DIR="$PWD/_build/macos_arm64/release/webrtc"
+
+                  # The libc++ C++ module compilation references SDK modulemaps
+                  # (DarwinBasic, DarwinFoundation1, etc.) that don't exist in
+                  # public macOS SDKs — Google's hermetic SDK includes them.
+                  # Create empty stubs so the .pcm compilation succeeds.
+                  grep -rohE '/[^ "]+\.modulemap' "$BUILD_DIR" --include='*.ninja' \
+                    | sort -u \
+                    | while read -r mapfile; do
+                        if [ ! -f "$mapfile" ]; then
+                          modname=$(basename "$mapfile" .modulemap)
+                          echo "Creating stub: $mapfile (module $modname)"
+                          sudo mkdir -p "$(dirname "$mapfile")"
+                          printf 'module %s [system] {\n}\n' "$modname" | sudo tee "$mapfile" > /dev/null
+                        fi
+                      done
+
             - name: Build WebRTC
               run: |
                   export PATH="$PWD/_source/macos_arm64/depot_tools:$PATH"
                   BUILD_DIR="$PWD/_build/macos_arm64/release/webrtc"
 
-                  # Build specific targets only — skip ':default' which pulls
-                  # in libc++ C++ module compilation (DarwinBasic.pcm etc.)
-                  # that depends on SDK modulemaps absent from all current SDKs.
                   autoninja -C "$BUILD_DIR" \
                     api/audio_codecs:builtin_audio_decoder_factory \
                     api/task_queue:default_task_queue_factory \
