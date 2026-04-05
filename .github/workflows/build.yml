@@ -26,6 +26,15 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
+            - name: Select latest Xcode
+              run: |
+                  # List available Xcode versions and pick the latest
+                  ls -d /Applications/Xcode*.app || true
+                  LATEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+                  echo "Using $LATEST_XCODE"
+                  sudo xcode-select --switch "$LATEST_XCODE/Contents/Developer"
+                  xcodebuild -version
+
             - name: Free disk space
               working-directory: .
               run: |
