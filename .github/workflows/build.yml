@@ -52,10 +52,19 @@ jobs:
 
             - name: Fetch, patch & configure
               run: |
-                  python3 run.py build macos_arm64 \
-                    --commit "${{ inputs.commit }}" \
-                    --webrtc-fetch \
-                    --webrtc-extra-gn-args 'use_clang_modules=false mac_deployment_target="11.0" enable_dsyms=false'
+                  max_retries=3
+                  retry_delay=60
+                  for i in $(seq 1 $max_retries); do
+                    echo "=== Attempt $i of $max_retries ==="
+                    python3 run.py build macos_arm64 \
+                      --commit "${{ inputs.commit }}" \
+                      --webrtc-fetch \
+                      --webrtc-extra-gn-args 'use_clang_modules=false mac_deployment_target="11.0" enable_dsyms=false' \
+                      && break
+                    echo "::warning::Attempt $i failed. Retrying in ${retry_delay}s..."
+                    sleep $retry_delay
+                    retry_delay=$((retry_delay * 2))
+                  done
 
             - name: Package
               run: |
