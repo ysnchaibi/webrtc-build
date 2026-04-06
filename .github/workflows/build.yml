@@ -103,11 +103,29 @@ jobs:
                     echo "use_custom_libcxx=false" >> "$ARGS_GN"
                     echo "Injected use_custom_libcxx=false into args.gn"
                   fi
+                  if ! grep -q "use_custom_libcxx_for_host" "$ARGS_GN"; then
+                    echo "use_custom_libcxx_for_host=false" >> "$ARGS_GN"
+                    echo "Injected use_custom_libcxx_for_host=false into args.gn"
+                  fi
                   echo "=== args.gn ==="
                   cat "$ARGS_GN"
 
                   cd "$SRC_DIR"
                   gn gen "$BUILD_DIR"
+
+                  # Create stub modulemaps for any missing SDK modulemap files
+                  echo "=== Creating stub modulemaps for missing SDK files ==="
+                  grep -rh '\.modulemap' "$BUILD_DIR"/*.ninja "$BUILD_DIR/obj/"*.ninja 2>/dev/null \
+                    | grep -oE '/[^ ]*\.modulemap' \
+                    | sort -u \
+                    | while read -r mmap; do
+                        if [ ! -f "$mmap" ]; then
+                          echo "Creating stub: $mmap"
+                          sudo mkdir -p "$(dirname "$mmap")"
+                          echo 'module DarwinStub {}' | sudo tee "$mmap" > /dev/null
+                        fi
+                      done
+                  echo "=== Done creating stubs ==="
 
             - name: Build WebRTC
               run: |
