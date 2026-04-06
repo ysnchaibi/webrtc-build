@@ -90,25 +90,22 @@ jobs:
                   echo "Updated args.gn:"
                   cat "$ARGS_GN"
 
-            - name: Create missing SDK modulemaps
+            - name: Disable custom libc++ and regenerate build files
               run: |
-                  SDK_PATH=$(xcrun --show-sdk-path)
-                  echo "SDK: $SDK_PATH"
+                  ARGS_GN="$PWD/_build/macos_arm64/release/webrtc/args.gn"
+                  BUILD_DIR="$PWD/_build/macos_arm64/release/webrtc"
+                  SRC_DIR="$PWD/_source/macos_arm64/webrtc/src"
+                  export PATH="$PWD/_source/macos_arm64/depot_tools:$PATH"
 
-                  # WebRTC m144 libc++ module compilation references modulemaps
-                  # from Google's hermetic SDK that don't exist in public macOS SDKs.
-                  # Create empty stubs so the .pcm compilation succeeds.
-                  # (use_custom_libcxx=false means the actual libc++ comes from
-                  # the system — these stubs don't affect the final binary.)
-                  for mod in DarwinBasic DarwinFoundation1 DarwinFoundation2 DarwinFoundation3; do
-                    mapfile="$SDK_PATH/usr/include/$mod.modulemap"
-                    if [ ! -f "$mapfile" ]; then
-                      echo "Creating stub: $mapfile"
-                      printf 'module %s [system] {\n}\n' "$mod" | sudo tee "$mapfile" > /dev/null
-                    else
-                      echo "Already exists: $mapfile"
-                    fi
-                  done
+                  if ! grep -q "use_custom_libcxx" "$ARGS_GN"; then
+                    echo "" >> "$ARGS_GN"
+                    echo "use_custom_libcxx=false" >> "$ARGS_GN"
+                    echo "Injected use_custom_libcxx=false into args.gn"
+                  fi
+                  echo "=== args.gn ==="
+                  cat "$ARGS_GN"
+
+                  gn gen "$BUILD_DIR" --root="$SRC_DIR"
 
             - name: Build WebRTC
               run: |
