@@ -115,14 +115,17 @@ jobs:
 
                   # Create stub modulemaps for any missing SDK modulemap files
                   echo "=== Creating stub modulemaps for missing SDK files ==="
-                  grep -rh '\.modulemap' "$BUILD_DIR"/*.ninja "$BUILD_DIR/obj/"*.ninja 2>/dev/null \
+                  { find "$BUILD_DIR" -maxdepth 1 -name '*.ninja' 2>/dev/null; \
+                    find "$BUILD_DIR/obj" -name '*.ninja' 2>/dev/null; } \
+                    | xargs grep -h '\.modulemap' 2>/dev/null \
                     | grep -oE '/[^ ]*\.modulemap' \
                     | sort -u \
                     | while read -r mmap; do
                         if [ ! -f "$mmap" ]; then
                           echo "Creating stub: $mmap"
                           sudo mkdir -p "$(dirname "$mmap")"
-                          echo 'module DarwinStub {}' | sudo tee "$mmap" > /dev/null
+                          mod_name=$(basename "$mmap" .modulemap)
+                          printf 'module %s {}\n' "$mod_name" | sudo tee "$mmap" > /dev/null
                         fi
                       done
                   echo "=== Done creating stubs ==="
