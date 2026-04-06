@@ -96,6 +96,7 @@ jobs:
                   BUILD_DIR="$PWD/_build/macos_arm64/release/webrtc"
                   SRC_DIR="$PWD/_source/macos_arm64/webrtc/src"
                   export PATH="$PWD/_source/macos_arm64/depot_tools:$PATH"
+                  export PATH="$SRC_DIR/buildtools/mac:$PATH"
 
                   if ! grep -q "use_custom_libcxx" "$ARGS_GN"; then
                     echo "" >> "$ARGS_GN"
@@ -105,7 +106,8 @@ jobs:
                   echo "=== args.gn ==="
                   cat "$ARGS_GN"
 
-                  gn gen "$BUILD_DIR" --root="$SRC_DIR"
+                  cd "$SRC_DIR"
+                  gn gen "$BUILD_DIR"
 
             - name: Build WebRTC
               run: |
