@@ -115,16 +115,14 @@ jobs:
 
                   # Create stub modulemaps for any missing SDK modulemap files
                   echo "=== Creating stub modulemaps for missing SDK files ==="
-                  { find "$BUILD_DIR" -maxdepth 1 -name '*.ninja' 2>/dev/null; \
-                    find "$BUILD_DIR/obj" -name '*.ninja' 2>/dev/null; } \
-                    | xargs grep -h '\.modulemap' 2>/dev/null \
+                  grep -rh '\.modulemap' "$BUILD_DIR" --include='*.ninja' 2>/dev/null \
                     | grep -oE '/[^ ]*\.modulemap' \
                     | sort -u \
                     | while read -r mmap; do
                         if [ ! -f "$mmap" ]; then
                           echo "Creating stub: $mmap"
                           sudo mkdir -p "$(dirname "$mmap")"
-                          mod_name=$(basename "$mmap" .modulemap)
+                          mod_name=$(basename "$mmap" .modulemap | sed 's/[^A-Za-z0-9_]/_/g')
                           printf 'module %s {}\n' "$mod_name" | sudo tee "$mmap" > /dev/null
                         fi
                       done
