@@ -3,10 +3,28 @@ name: Build WebRTC
 on:
     workflow_dispatch:
         inputs:
-            commit:
-                description: "webrtc-sdk/webrtc commit hash (from VERSION or custom)"
+            webrtc_branch:
+                description: "webrtc-sdk/webrtc branch to build"
                 required: true
-                default: "770e5461892d7d1aaff7ff886ab1fc7c5cd77bd1"
+                default: "m144_release"
+                type: choice
+                options:
+                    - m146_release
+                    - m144_release
+                    - m137_release
+                    - m125_release
+            build_type:
+                description: "Build type (controls is_debug and enable_dsyms)"
+                required: true
+                default: "release"
+                type: choice
+                options:
+                    - release
+                    - debug
+            commit:
+                description: "webrtc-sdk/webrtc commit hash (overrides branch when set)"
+                required: false
+                default: ""
             release_tag:
                 description: "Release tag (e.g., m144.7559.03)"
                 required: true
@@ -52,10 +70,25 @@ jobs:
 
             - name: Fetch, patch & configure
               run: |
+                  CHECKOUT_REF="${{ inputs.commit }}"
+                  if [ -z "$CHECKOUT_REF" ]; then
+                    CHECKOUT_REF="${{ inputs.webrtc_branch }}"
+                  fi
+                  echo "Using ref: $CHECKOUT_REF"
                   python3 run.py build macos_arm64 \
-                    --commit "${{ inputs.commit }}" \
+                    --commit "$CHECKOUT_REF" \
                     --webrtc-fetch \
                     --webrtc-nobuild
+
+            - name: Set debug GN args
+              if: inputs.build_type == 'debug'
+              run: |
+                  ARGS_GN="$PWD/_build/macos_arm64/release/webrtc/args.gn"
+                  echo "" >> "$ARGS_GN"
+                  echo "is_debug = true" >> "$ARGS_GN"
+                  echo "enable_dsyms = true" >> "$ARGS_GN"
+                  echo "Updated args.gn:"
+                  cat "$ARGS_GN"
 
             - name: Create missing SDK modulemaps
               run: |
@@ -130,8 +163,33 @@ jobs:
 
                   echo "${{ inputs.release_tag }}" > /tmp/package/VERSION
 
+                  # Generate WebRTCConfig.cmake for Qt6 integration
+                  {
+                    printf '# WebRTCConfig.cmake\n'
+                    printf 'if(NOT TARGET WebRTC::WebRTC)\n'
+                    printf '  add_library(WebRTC::WebRTC STATIC IMPORTED)\n'
+                    printf '  set_target_properties(WebRTC::WebRTC PROPERTIES\n'
+                    printf '    IMPORTED_LOCATION "${CMAKE_CURRENT_LIST_DIR}/lib/libwebrtc.a"\n'
+                    printf '    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}/include"\n'
+                    printf '    INTERFACE_COMPILE_DEFINITIONS "WEBRTC_MAC;WEBRTC_POSIX"\n'
+                    printf '  )\n'
+                    printf '  # macOS frameworks required by WebRTC\n'
+                    printf '  foreach(fw Foundation AVFoundation CoreAudio CoreMedia CoreVideo\n'
+                    printf '             AudioToolbox VideoToolbox CoreGraphics IOSurface Metal\n'
+                    printf '             AppKit ScreenCaptureKit CoreFoundation CoreServices)\n'
+                    printf '    find_library(${fw}_LIB ${fw})\n'
+                    printf '    if(${fw}_LIB)\n'
+                    printf '      list(APPEND _webrtc_frameworks ${${fw}_LIB})\n'
+                    printf '    endif()\n'
+                    printf '  endforeach()\n'
+                    printf '  set_property(TARGET WebRTC::WebRTC APPEND PROPERTY\n'
+                    printf '    INTERFACE_LINK_LIBRARIES ${_webrtc_frameworks}\n'
+                    printf '  )\n'
+                    printf 'endif()\n'
+                  } > /tmp/package/WebRTCConfig.cmake
+
                   cd /tmp/package
-                  tar -Jcf /tmp/libwebrtc-macos-arm64.tar.xz include lib VERSION
+                  tar -Jcf /tmp/libwebrtc-macos-arm64.tar.xz include lib VERSION WebRTCConfig.cmake
                   echo "=== Package size ==="
                   ls -lh /tmp/libwebrtc-macos-arm64.tar.xz
 
@@ -152,10 +210,23 @@ jobs:
                   tag_name: ${{ inputs.release_tag }}
                   name: "WebRTC ${{ inputs.release_tag }}"
                   body: |
-                      WebRTC `${{ inputs.release_tag }}` built from [webrtc-sdk/webrtc](https://github.com/webrtc-sdk/webrtc) with `use_custom_libcxx=false` (system libc++).
+                      WebRTC `${{ inputs.release_tag }}` built from [webrtc-sdk/webrtc](https://github.com/webrtc-sdk/webrtc).
 
-                      - Source: `webrtc-sdk/webrtc`
-                      - Commit: `${{ inputs.commit }}`
-                      - Platform: macOS arm64
-                      - ABI: `std::__1::` (Apple system libc++)
+                      - **Branch:** `${{ inputs.webrtc_branch }}`
+                      - **Commit:** `${{ inputs.commit != '' && inputs.commit || '(branch tip)' }}`
+                      - **Build type:** `${{ inputs.build_type }}`
+                      - **Platform:** macOS arm64 (Apple Silicon)
+                      - **ABI:** `std::__1::` (Apple system libc++, compatible with Qt6)
+
+                      ## Qt6 CMake Integration
+
+                      Extract the tarball, then in your `CMakeLists.txt`:
+
+                      ```cmake
+                      set(WebRTC_DIR "/path/to/webrtc-macos-arm64")
+                      find_package(WebRTC REQUIRED PATHS ${WebRTC_DIR} NO_DEFAULT_PATH)
+                      target_link_libraries(your_app PRIVATE WebRTC::WebRTC)
+                      ```
+
+                      The included `WebRTCConfig.cmake` automatically links all required macOS frameworks (Foundation, AVFoundation, CoreAudio, CoreMedia, CoreVideo, AudioToolbox, VideoToolbox, CoreGraphics, IOSurface, Metal, AppKit, ScreenCaptureKit, CoreFoundation, CoreServices).
                   files: libwebrtc-macos-arm64.tar.xz
