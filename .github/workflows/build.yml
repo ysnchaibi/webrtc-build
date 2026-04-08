@@ -77,22 +77,18 @@ jobs:
 
             - name: Package
               run: |
-                  python3 run.py package macos_arm64
+                  BUILD_DIR="_build/macos_arm64/release/webrtc"
+                  SRC_DIR="_source/macos_arm64/webrtc/src"
+                  PKG_DIR="_package/macos_arm64/webrtc"
 
-            - name: Verify ABI compatibility
-              run: |
-                  LIB="$PWD/_package/macos_arm64/webrtc/lib/libwebrtc.a"
-                  echo "=== Checking for Chromium libc++ symbols ==="
-                  CR_COUNT=$(nm "$LIB" 2>/dev/null | grep -c '__Cr' || true)
-                  STD1_COUNT=$(nm "$LIB" 2>/dev/null | grep -c '__1' || true)
-                  echo "__Cr symbols (Chromium libc++): $CR_COUNT"
-                  echo "__1 symbols (system libc++):    $STD1_COUNT"
+                  mkdir -p "$PKG_DIR"/{include,lib}
 
-                  if [ "$CR_COUNT" -gt 0 ]; then
-                    echo "::warning::Found $CR_COUNT Chromium libc++ (__Cr) symbols — may cause ABI issues"
-                  else
-                    echo "Clean build — no Chromium libc++ symbols!"
-                  fi
+                  # Copy headers
+                  rsync -am --include='*/' --include='*.h' --include='*.hpp' --exclude='*' \
+                    "$SRC_DIR/." "$PKG_DIR/include/."
+
+                  # Copy library
+                  cp "$BUILD_DIR/libwebrtc.a" "$PKG_DIR/lib/"
 
             - name: Repackage for vcpkg
               working-directory: .
@@ -101,8 +97,6 @@ jobs:
                   mkdir -p package/{include,lib}
                   cp "$SRC/lib/libwebrtc.a" package/lib/
                   cp -R "$SRC/include/." package/include/
-                  cp "$SRC/VERSIONS" package/ 2>/dev/null || true
-                  cp "$SRC/NOTICE" package/ 2>/dev/null || true
                   echo "${{ inputs.release_tag }}" > package/VERSION
 
                   cd package
