@@ -17,7 +17,7 @@ permissions:
 
 jobs:
     build-macos-arm64:
-        runs-on: macos-14
+        runs-on: macos-15
         timeout-minutes: 120
         defaults:
             run:
@@ -68,7 +68,7 @@ jobs:
                     rm -f "$SOURCE_DIR/.gclient_entries" || true
                   fi
 
-            - name: Fetch, patch & configure
+            - name: Fetch, patch & build
               run: |
                   max_retries=3
                   retry_delay=120
