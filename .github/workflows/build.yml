@@ -76,29 +76,24 @@ jobs:
                     --webrtc-extra-gn-args 'use_clang_modules=false mac_deployment_target="11.0"'
 
             - name: Package
+              working-directory: .
               run: |
-                  BUILD_DIR="_build/macos_arm64/release/webrtc"
-                  SRC_DIR="_source/macos_arm64/webrtc/src"
-                  PKG_DIR="_package/macos_arm64/webrtc"
+                  BUILD_DIR="webrtc-build/build/_build/macos_arm64/release/webrtc"
+                  SRC_DIR="webrtc-build/build/_source/macos_arm64/webrtc/src"
 
-                  mkdir -p "$PKG_DIR"/{include,lib}
+                  mkdir -p package/{include,lib}
 
                   # Copy headers
                   rsync -am --include='*/' --include='*.h' --include='*.hpp' --exclude='*' \
-                    "$SRC_DIR/." "$PKG_DIR/include/."
+                    "$SRC_DIR/." "package/include/."
 
                   # Copy library
-                  cp "$BUILD_DIR/libwebrtc.a" "$PKG_DIR/lib/"
+                  cp "$BUILD_DIR/libwebrtc.a" package/lib/
 
-            - name: Repackage for vcpkg
-              working-directory: .
-              run: |
-                  SRC="webrtc-build/build/_package/macos_arm64/webrtc"
-                  mkdir -p package/{include,lib}
-                  cp "$SRC/lib/libwebrtc.a" package/lib/
-                  cp -R "$SRC/include/." package/include/
+                  # Version file
                   echo "${{ inputs.release_tag }}" > package/VERSION
 
+                  # Create tarball
                   cd package
                   tar -Jcf ../libwebrtc-macos-arm64.tar.xz include lib VERSION
                   echo "=== Package size ==="
