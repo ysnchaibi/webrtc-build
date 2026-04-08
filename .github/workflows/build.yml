@@ -50,10 +50,28 @@ jobs:
               run: |
                   git clone --depth 1 https://github.com/webrtc-sdk/webrtc-build.git
 
+            - name: Restore WebRTC source cache
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      webrtc-build/build/_source/macos_arm64/depot_tools
+                      webrtc-build/build/_source/macos_arm64/webrtc
+                  key: webrtc-source-macos-arm64-${{ inputs.commit }}
+                  restore-keys: |
+                      webrtc-source-macos-arm64-
+
+            - name: Clean stale gclient state
+              run: |
+                  SOURCE_DIR="_source/macos_arm64/webrtc"
+                  if [ -d "$SOURCE_DIR" ]; then
+                    rm -rf "$SOURCE_DIR/_bad_scm" || true
+                    rm -f "$SOURCE_DIR/.gclient_entries" || true
+                  fi
+
             - name: Fetch, patch & configure
               run: |
                   max_retries=3
-                  retry_delay=60
+                  retry_delay=120
                   for i in $(seq 1 $max_retries); do
                     echo "=== Attempt $i of $max_retries ==="
                     python3 run.py build macos_arm64 \
