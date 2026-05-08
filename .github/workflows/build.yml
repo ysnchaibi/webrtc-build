@@ -4,13 +4,13 @@ on:
     workflow_dispatch:
         inputs:
             commit:
-                description: "webrtc-sdk/webrtc commit hash (from VERSION or custom)"
+                description: "webrtc-sdk/webrtc commit hash (must match webrtc-sdk/webrtc-build patches)"
                 required: true
-                default: "770e5461892d7d1aaff7ff886ab1fc7c5cd77bd1"
+                default: "6c1aa903241e69eb2eca64caad16779351bb1ab2"
             release_tag:
-                description: "Release tag (e.g., m144.7559.03)"
+                description: "Release tag (e.g., m144.7559.05)"
                 required: true
-                default: "m144.7559.03"
+                default: "m144.7559.05"
             target:
                 description: "Which platform to build"
                 required: true
