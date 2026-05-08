@@ -118,3 +118,154 @@ jobs:
                       - Platform: macOS arm64
                       - ABI: `std::__1::` (Apple system libc++)
                   files: libwebrtc-macos-arm64.tar.xz
+
+    build-windows-x64:
+        runs-on: windows-2022
+        timeout-minutes: 180
+        defaults:
+            run:
+                shell: bash
+                working-directory: ./webrtc-build/build
+
+        env:
+            # Required by depot_tools / GN on Windows so it uses the installed MSVC
+            # toolchain (the one Qt is also built against) instead of trying to pull
+            # an internal Google toolchain.
+            DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
+            GYP_MSVS_VERSION: "2022"
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Show build environment
+              shell: pwsh
+              working-directory: .
+              run: |
+                  systeminfo | Select-String "OS Name","OS Version"
+                  cmake --version
+                  python --version
+
+            - name: Setup MSVC (x64)
+              uses: ilammy/msvc-dev-cmd@v1
+              with:
+                  arch: x64
+                  toolset: 14.4
+
+            - name: Free disk space
+              shell: pwsh
+              working-directory: .
+              run: |
+                  Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize
+                  # Remove a few large preinstalled toolchains we don't need.
+                  $paths = @(
+                    "C:\Android",
+                    "C:\Program Files\dotnet",
+                    "C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk",
+                    "$env:AGENT_TOOLSDIRECTORY\Ruby",
+                    "$env:AGENT_TOOLSDIRECTORY\go"
+                  )
+                  foreach ($p in $paths) {
+                    if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
+                  }
+                  Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize
+
+            - name: Enable long paths & configure git
+              shell: pwsh
+              working-directory: .
+              run: |
+                  git config --system core.longpaths true
+                  git config --global core.autocrlf false
+                  New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+                    -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force | Out-Null
+
+            - name: Clone webrtc-sdk/webrtc-build
+              working-directory: .
+              run: |
+                  git clone --depth 1 https://github.com/webrtc-sdk/webrtc-build.git
+
+            - name: Restore WebRTC source cache
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      webrtc-build/build/_source/windows_x86_64/depot_tools
+                      webrtc-build/build/_source/windows_x86_64/webrtc
+                  key: webrtc-source-windows-x86_64-${{ inputs.commit }}
+                  restore-keys: |
+                      webrtc-source-windows-x86_64-
+
+            - name: Clean stale gclient state
+              run: |
+                  SOURCE_DIR="_source/windows_x86_64/webrtc"
+                  if [ -d "$SOURCE_DIR" ]; then
+                    rm -rf "$SOURCE_DIR/_bad_scm" || true
+                    rm -f "$SOURCE_DIR/.gclient_entries" || true
+                  fi
+
+            - name: Fetch, patch & build
+              # GN args tuned for Qt 6 / MSVC interop:
+              #  - use_custom_libcxx=false : link the system MSVC STL (matches Qt)
+              #  - is_clang=false          : compile with MSVC cl.exe (same toolchain as Qt)
+              #  - use_lld=false           : link with link.exe (MSVC linker)
+              #  - rtc_include_tests=false : skip tests/tools we don't ship
+              #  - enable_iterator_debugging=false : release-only, matches Qt /MD release
+              #  - treat_warnings_as_errors=false  : tolerate MSVC version drift
+              run: |
+                  python run.py build windows_x86_64 \
+                    --commit "${{ inputs.commit }}" \
+                    --webrtc-fetch \
+                    --webrtc-extra-gn-args 'use_custom_libcxx=false is_clang=false use_lld=false rtc_include_tests=false enable_iterator_debugging=false treat_warnings_as_errors=false'
+
+            - name: Package
+              shell: bash
+              working-directory: .
+              run: |
+                  BUILD_DIR="webrtc-build/build/_build/windows_x86_64/release/webrtc"
+                  SRC_DIR="webrtc-build/build/_source/windows_x86_64/webrtc/src"
+
+                  mkdir -p package/include package/lib
+
+                  # Copy headers
+                  rsync -am --include='*/' --include='*.h' --include='*.hpp' --exclude='*' \
+                    "$SRC_DIR/." "package/include/."
+
+                  # Copy static library (MSVC produces webrtc.lib)
+                  if [ -f "$BUILD_DIR/webrtc.lib" ]; then
+                    cp "$BUILD_DIR/webrtc.lib" package/lib/
+                  elif [ -f "$BUILD_DIR/obj/webrtc.lib" ]; then
+                    cp "$BUILD_DIR/obj/webrtc.lib" package/lib/
+                  else
+                    echo "ERROR: webrtc.lib not found under $BUILD_DIR" >&2
+                    find "$BUILD_DIR" -name 'webrtc*.lib' -maxdepth 4 || true
+                    exit 1
+                  fi
+
+                  # Version file
+                  echo "${{ inputs.release_tag }}" > package/VERSION
+
+                  # Create archive (use 7z for better Windows interop, fall back to tar.xz)
+                  cd package
+                  7z a -txz -mx=9 ../libwebrtc-windows-x64.tar.xz include lib VERSION
+                  echo "=== Package size ==="
+                  ls -lh ../libwebrtc-windows-x64.tar.xz
+
+            - name: Upload artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: libwebrtc-windows-x64
+                  path: libwebrtc-windows-x64.tar.xz
+
+            - name: Create release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ inputs.release_tag }}
+                  name: "WebRTC ${{ inputs.release_tag }}"
+                  body: |
+                      WebRTC `${{ inputs.release_tag }}` built from [webrtc-sdk/webrtc](https://github.com/webrtc-sdk/webrtc) with the system MSVC STL — drop-in compatible with Qt 6 for Windows (MSVC 2022, x64).
+
+                      - Source: `webrtc-sdk/webrtc`
+                      - Commit: `${{ inputs.commit }}`
+                      - Platform: Windows x64
+                      - Toolchain: MSVC 2022 (cl.exe + link.exe)
+                      - CRT: dynamic (`/MD`, release) — matches Qt official binaries
+                      - GN args: `is_clang=false use_lld=false use_custom_libcxx=false`
+                  files: libwebrtc-windows-x64.tar.xz
